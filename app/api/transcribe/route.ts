@@ -9,7 +9,8 @@ import { randomUUID } from 'crypto'
 function convertToWav(inputBuffer: Buffer, originalName: string): Buffer {
   const id = randomUUID()
   const tmpDir = tmpdir()
-  const inputPath = join(tmpDir, `${id}_input_${originalName}`)
+ const ext = originalName.split('.').pop() || 'mp4'
+  const inputPath = join(tmpDir, `${id}_input.${ext}`)
   const outputPath = join(tmpDir, `${id}_output.wav`)
 
   try {
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
         buffer = convertToWav(buffer, file.name) as Buffer<ArrayBuffer>
         console.log(`Conversion done. WAV size: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`)
       } catch (err) {
-        console.error('ffmpeg conversion failed:', err)
+        console.error('ffmpeg conversion failed:', (err as any)?.stderr?.toString() || err)
         return NextResponse.json({ error: 'Could not convert file to WAV. Please upload a WAV file.' }, { status: 400 })
       }
     }
