@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { speechToText } from '@/lib/sarvam'
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'fs'
 import { execSync } from 'child_process'
-import ffmpegPath from 'ffmpeg-static'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
@@ -17,7 +16,7 @@ function convertToWav(inputBuffer: Buffer, originalName: string): Buffer {
   try {
     writeFileSync(inputPath, inputBuffer)
     execSync(
-      `${ffmpegPath} -i "${inputPath}" -vn -acodec pcm_s16le -ar 16000 -ac 1 "${outputPath}" -y`,
+      `ffmpeg -i "${inputPath}" -vn -acodec pcm_s16le -ar 16000 -ac 1 "${outputPath}" -y`,
       { timeout: 120000, stdio: 'pipe' }
     )
     const wavBuffer = readFileSync(outputPath)
