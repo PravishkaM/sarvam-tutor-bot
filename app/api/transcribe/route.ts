@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     if (!isWav(buffer)) {
       console.log(`Converting ${file.name} to WAV...`)
       try {
-        buffer = convertToWav(buffer, file.name)
+        buffer = convertToWav(buffer, file.name) as Buffer<ArrayBuffer>
         console.log(`Conversion done. WAV size: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`)
       } catch (err) {
         console.error('ffmpeg conversion failed:', err)
