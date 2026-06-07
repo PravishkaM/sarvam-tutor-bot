@@ -318,7 +318,7 @@ export default function Home() {
           >
             <div className="upload-icon">📁</div>
             <div className="upload-text">Drop your audio/video file here</div>
-            <div className="upload-subtext">or click to browse · MP3, WAV, MP4, WebM</div>
+            <div className="upload-subtext">or click to browse · MP3, WAV, MP4, WebM · WAV files work best</div>
 
             {uploading && (
               <>
@@ -343,7 +343,13 @@ export default function Home() {
           <div className="header-divider" />
           <span className="header-title">Multilingual Tutor Bot</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={() => { setStep('upload'); setMessages([]); setTranscript(''); setChatHistory([]) }}
+            style={{ background: 'none', border: '1px solid rgba(0,0,0,0.1)', borderRadius: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans' }}
+          >
+            ← New Lecture
+          </button>
           <span style={{ fontSize: 11, color: 'rgba(0,0,0,0.35)', fontStyle: 'italic' }}>powered by Sarvam</span>
         </div>
       </div>
