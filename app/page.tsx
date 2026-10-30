@@ -100,14 +100,50 @@ export default function Home() {
     setYoutubeLoading(true);
 
     try {
-      const res = await fetch('/api/youtube', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: youtubeUrl.trim() }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setTranscript(data.transcript);
+      // Extract video ID
+      const ytMatch = youtubeUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]+)/);
+      if (!ytMatch) throw new Error('Invalid YouTube URL');
+      const videoId = ytMatch[1];
+
+      // Fetch the YouTube page client-side to extract captions
+      const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
+      const html = await pageRes.text();
+
+      // Extract captions JSON from the page
+      const captionMatch = html.match(/"captionTracks":\s*(\[.*?\])/);
+      if (!captionMatch) throw new Error('No captions found for this video. It may not have subtitles enabled.');
+
+      const captionTracks = JSON.parse(captionMatch[1]);
+      if (!captionTracks.length) throw new Error('No caption tracks available.');
+
+      // Prefer English, otherwise take the first track
+      const track = captionTracks.find((t: { languageCode: string }) => t.languageCode === 'en') || captionTracks[0];
+      const captionUrl = track.baseUrl;
+
+      // Fetch the actual captions XML
+      const captionRes = await fetch(captionUrl);
+      const captionXml = await captionRes.text();
+
+      // Parse XML to extract text
+      const textSegments = captionXml.match(/<text[^>]*>(.*?)<\/text>/gs) || [];
+      const transcriptText = textSegments
+        .map((seg: string) => {
+          const textMatch = seg.match(/<text[^>]*>(.*?)<\/text>/s);
+          return textMatch ? textMatch[1]
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\n/g, ' ')
+            .trim() : '';
+        })
+        .filter(Boolean)
+        .join(' ');
+
+      if (!transcriptText) throw new Error('Could not extract text from captions.');
+
+      setTranscript(transcriptText);
       setScreen('chat');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch YouTube transcript';
