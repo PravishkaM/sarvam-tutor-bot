@@ -22,25 +22,48 @@ export async function speechToText(audioBuffer: ArrayBuffer, language?: string):
   return data.transcript;
 }
 
-export async function textToSpeech(text: string, language: string): Promise<ArrayBuffer | null> {
-  // Split into sentence-based chunks under 480 chars
-  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
-  const chunks: string[] = [];
-  let current = '';
-
-  for (const sentence of sentences) {
-    if ((current + ' ' + sentence).trim().length > 480) {
-      if (current) chunks.push(current.trim());
-      current = sentence;
-    } else {
-      current = (current + ' ' + sentence).trim();
+// Join several WAV files into one playable WAV (a plain byte-concat leaves the
+// first file's header in charge, so players stop after the first piece).
+export function mergeWavs(wavs: Uint8Array[]): Uint8Array {
+  const findData = (b: Uint8Array) => {
+    const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    let off = 12;
+    while (off + 8 <= b.length) {
+      const id = String.fromCharCode(b[off], b[off + 1], b[off + 2], b[off + 3]);
+      const size = v.getUint32(off + 4, true);
+      if (id === 'data') return { start: off + 8, size: Math.min(size, b.length - off - 8) };
+      off += 8 + size + (size % 2);
     }
-  }
-  if (current) chunks.push(current.trim());
+    return { start: 44, size: b.length - 44 };
+  };
 
-  // Send up to 3 chunks
-  const audioChunks: ArrayBuffer[] = [];
-  for (let i = 0; i < Math.min(chunks.length, 3); i++) {
+  if (wavs.length === 1) return wavs[0];
+  const first = wavs[0];
+  const firstData = findData(first);
+  const header = first.slice(0, firstData.start);
+  const pcm = wavs.map((w) => {
+    const d = findData(w);
+    return w.subarray(d.start, d.start + d.size);
+  });
+  const dataLen = pcm.reduce((s, p) => s + p.length, 0);
+
+  const out = new Uint8Array(header.length + dataLen);
+  out.set(header, 0);
+  let off = header.length;
+  for (const p of pcm) { out.set(p, off); off += p.length; }
+
+  const v = new DataView(out.buffer);
+  v.setUint32(4, out.length - 8, true);          // RIFF size
+  v.setUint32(header.length - 4, dataLen, true); // data size
+  return out;
+}
+
+export async function textToSpeech(text: string, language: string): Promise<ArrayBuffer | null> {
+  // Bulbul accepts max 500 chars per request. Split at sentence ends (including
+  // the Hindi danda "।") and hard-split anything still too long at word boundaries.
+  const chunks = splitForTranslation(text, 450).slice(0, 6);
+
+  const results = await Promise.all(chunks.map(async (chunk) => {
     try {
       const res = await fetch('https://api.sarvam.ai/text-to-speech', {
         method: 'POST',
@@ -49,7 +72,7 @@ export async function textToSpeech(text: string, language: string): Promise<Arra
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          inputs: [chunks[i]],
+          inputs: [chunk],
           target_language_code: language,
           speaker: 'priya',
           model: 'bulbul:v3',
@@ -63,29 +86,20 @@ export async function textToSpeech(text: string, language: string): Promise<Arra
 
       const data = await res.json();
       if (data.audios && data.audios[0]) {
-        const binaryStr = atob(data.audios[0]);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let j = 0; j < binaryStr.length; j++) {
-          bytes[j] = binaryStr.charCodeAt(j);
-        }
-        audioChunks.push(bytes.buffer);
+        return Buffer.from(data.audios[0], 'base64');
       }
+      return null;
     } catch (e) {
       console.error('TTS error (non-fatal):', e);
+      return null;
     }
-  }
+  }));
 
+  const audioChunks = results.filter((r) => r !== null).map((b) => new Uint8Array(b as Buffer));
   if (audioChunks.length === 0) return null;
 
-  // Combine audio chunks
-  const totalLength = audioChunks.reduce((sum, buf) => sum + buf.byteLength, 0);
-  const combined = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const buf of audioChunks) {
-    combined.set(new Uint8Array(buf), offset);
-    offset += buf.byteLength;
-  }
-  return combined.buffer;
+  const merged = mergeWavs(audioChunks);
+  return merged.buffer.slice(merged.byteOffset, merged.byteOffset + merged.byteLength) as ArrayBuffer;
 }
 
 function splitForTranslation(text: string, limit = 450): string[] {
@@ -261,7 +275,12 @@ RULES:
 
   // Parse DETECTED_LANG tag
   const langMatch = fullAnswer.match(/DETECTED_LANG:\s*(\S+)/);
-  const detectedLang = langMatch ? langMatch[1] : 'en-IN';
+  const VALID = ['en-IN','hi-IN','ta-IN','te-IN','kn-IN','bn-IN','ml-IN','gu-IN','mr-IN','pa-IN','od-IN'];
+  const rawLang = (langMatch ? langMatch[1] : 'en-IN').replace(/[^a-zA-Z-]/g, '');
+  const base = rawLang.split('-')[0].toLowerCase().replace(/^or$/, 'od');
+  const detectedLang = VALID.find((c) => c.toLowerCase() === rawLang.toLowerCase())
+    || VALID.find((c) => c.startsWith(base + '-'))
+    || 'en-IN';
   let answer = fullAnswer.replace(/\n?DETECTED_LANG:\s*\S+/, '').trim();
 
   // Safety net: if the reply came back in Roman letters for an Indian language,

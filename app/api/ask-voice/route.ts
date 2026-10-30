@@ -1,5 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { execFileSync } from 'child_process';
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
+import path from 'path';
 import { speechToText, askTutor, textToSpeech } from '@/lib/sarvam';
+
+// Browsers record WebM/Opus (Chrome) or MP4 (Safari). Convert to 16kHz mono WAV,
+// which is what the speech-to-text model handles best.
+function toWav(input: Buffer): Buffer {
+  const dir = '/tmp/voice-q';
+  mkdirSync(dir, { recursive: true });
+  const id = randomUUID();
+  const inPath = path.join(dir, `${id}.in`);
+  const outPath = path.join(dir, `${id}.wav`);
+  writeFileSync(inPath, input);
+  try {
+    execFileSync('ffmpeg', ['-y', '-i', inPath, '-ar', '16000', '-ac', '1', '-f', 'wav', outPath], { timeout: 30000, stdio: 'ignore' });
+    return readFileSync(outPath);
+  } finally {
+    try { unlinkSync(inPath); } catch {}
+    try { unlinkSync(outPath); } catch {}
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,26 +35,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No audio provided' }, { status: 400 });
     }
 
-    const audioBuffer = await audioFile.arrayBuffer();
+    const raw = Buffer.from(await audioFile.arrayBuffer());
+    let wav: Buffer;
+    try {
+      wav = toWav(raw);
+    } catch (e) {
+      console.error('Audio conversion failed:', e);
+      return NextResponse.json({ error: 'Could not read the recording. Please try again.' }, { status: 400 });
+    }
 
-    // STT - no language param for auto-detect
-    const questionText = await speechToText(audioBuffer);
+    // STT with auto language detection (transcribes, does not translate)
+    const questionText = (await speechToText(new Uint8Array(wav).buffer as ArrayBuffer, 'unknown')).trim();
+    if (!questionText) {
+      return NextResponse.json({ error: "I couldn't hear anything. Please try speaking again." }, { status: 400 });
+    }
 
-    // Ask tutor
     const { answer, detectedLang } = await askTutor(questionText, transcript, chatHistory);
 
-    // TTS
     let audioBase64 = null;
     try {
       const ttsBuffer = await textToSpeech(answer, detectedLang);
-      if (ttsBuffer) {
-        const bytes = new Uint8Array(ttsBuffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        audioBase64 = btoa(binary);
-      }
+      if (ttsBuffer) audioBase64 = Buffer.from(ttsBuffer).toString('base64');
     } catch (e) {
       console.error('TTS error (non-fatal):', e);
     }

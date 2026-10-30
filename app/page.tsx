@@ -132,7 +132,7 @@ export default function Home() {
         body: JSON.stringify({
           question,
           transcript,
-          chatHistory: messages,
+          chatHistory: messages.map(({ role, content }) => ({ role, content })),
         }),
       });
       const data = await res.json();
@@ -160,14 +160,16 @@ export default function Home() {
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         setMessages((prev) => [...prev, { role: 'user', content: '...' }]);
         setLoading(true);
 
         const formData = new FormData();
-        formData.append('audio', audioBlob, 'recording.wav');
+        const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+        formData.append('audio', audioBlob, `recording.${ext}`);
         formData.append('transcript', transcript);
-        formData.append('chatHistory', JSON.stringify(messages));
+        formData.append('chatHistory', JSON.stringify(messages.map(({ role, content }) => ({ role, content }))));
 
         try {
           const res = await fetch('/api/ask-voice', { method: 'POST', body: formData });
@@ -344,7 +346,7 @@ export default function Home() {
           {/* How it works */}
           <div className="grid md:grid-cols-3 gap-6 mb-20">
             {[
-              { icon: '1', title: 'Upload or paste', desc: 'Drop an audio/video file or paste a transcript directly. We handle the rest using Sarvam AI.' },
+              { icon: '1', title: 'Upload or paste', desc: 'Drop an audio/video file or paste a transcript directly.' },
               { icon: '2', title: 'Ask in any language', desc: 'Type or speak your question in Hindi, Tamil, English — any language you think in.' },
               { icon: '3', title: 'Get answers + quiz', desc: 'VidyaBot answers from the lecture in your language, with voice. Then test yourself with a quiz.' },
             ].map((step) => (
