@@ -222,9 +222,14 @@ export default function Home() {
   };
 
   // --- TRANSLATE TRANSCRIPT ---
+  const [transcriptTarget, setTranscriptTarget] = useState('hi-IN');
+  const [translatingTranscript, setTranslatingTranscript] = useState(false);
+
   const handleTranslateTranscript = async (targetLang: string) => {
-    if (!targetLang || targetLang === transcriptLang) return;
+    if (!targetLang || translatingTranscript) return;
+    setTranslatingTranscript(true);
     setTranscriptLang(targetLang);
+    setTranslatedTranscript('');
 
     try {
       const res = await fetch('/api/translate', {
@@ -237,7 +242,9 @@ export default function Home() {
       setTranslatedTranscript(data.translated);
     } catch (err) {
       console.error('Transcript translation error:', err);
-      setTranslatedTranscript('Translation failed. The transcript may be too long or the language pair may not be supported.');
+      setTranslatedTranscript('Translation failed. Please try again.');
+    } finally {
+      setTranslatingTranscript(false);
     }
   };
 
@@ -253,7 +260,7 @@ export default function Home() {
       const res = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: messages[idx].content, sourceLang: 'en-IN', targetLang }),
+        body: JSON.stringify({ text: messages[idx].content, sourceLang: 'auto', targetLang }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -707,20 +714,45 @@ export default function Home() {
         {/* Transcript panel */}
         {showTranscript && (
           <div className="w-80 border-r border-[rgba(168,85,247,0.1)] flex flex-col bg-[var(--bg-secondary)]">
-            <div className="p-3 border-b border-[rgba(168,85,247,0.1)] flex items-center justify-between">
-              <span className="text-sm font-medium">Transcript</span>
-              <select
-                value={transcriptLang}
-                onChange={(e) => handleTranslateTranscript(e.target.value)}
-              >
-                <option value="">Original</option>
-                {LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>{l.label}</option>
-                ))}
-              </select>
+            <div className="p-3 border-b border-[rgba(168,85,247,0.1)] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Transcript</span>
+                {transcriptLang && !translatingTranscript && (
+                  <button
+                    className="text-xs text-[var(--purple-300)] hover:text-white"
+                    onClick={() => { setTranscriptLang(''); setTranslatedTranscript(''); }}
+                  >
+                    Show original
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  className="flex-1"
+                  value={transcriptTarget}
+                  onChange={(e) => setTranscriptTarget(e.target.value)}
+                  disabled={translatingTranscript}
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>{l.label}</option>
+                  ))}
+                </select>
+                <button
+                  className="btn-primary text-xs py-1.5 px-3"
+                  onClick={() => handleTranslateTranscript(transcriptTarget)}
+                  disabled={translatingTranscript}
+                >
+                  {translatingTranscript ? 'Translating...' : 'Translate'}
+                </button>
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-3 text-sm text-[var(--text-secondary)] leading-relaxed">
-              {translatedTranscript && transcriptLang ? translatedTranscript : transcript}
+            <div className="flex-1 overflow-y-auto p-3 text-sm text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">
+              {translatingTranscript ? (
+                <div className="flex items-center gap-2">
+                  <div className="spinner"></div>
+                  <span>Translating transcript... long lectures can take up to a minute.</span>
+                </div>
+              ) : translatedTranscript && transcriptLang ? translatedTranscript : transcript}
             </div>
           </div>
         )}
