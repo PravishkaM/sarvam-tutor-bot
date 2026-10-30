@@ -1,81 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-async function fetchYoutubeTranscript(videoId: string): Promise<string> {
-  // Step 1: Use YouTube's innertube API to get video info including captions
-  const innertubeRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-    body: JSON.stringify({
-      context: {
-        client: {
-          clientName: 'WEB',
-          clientVersion: '2.20240101.00.00',
-          hl: 'en',
-        },
-      },
-      videoId,
-    }),
-  });
-
-  if (!innertubeRes.ok) {
-    throw new Error(`YouTube API returned ${innertubeRes.status}`);
-  }
-
-  const data = await innertubeRes.json();
-
-  // Extract caption tracks
-  const captions = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!captions || captions.length === 0) {
-    throw new Error('No captions available for this video. It may not have subtitles enabled.');
-  }
-
-  // Prefer English auto-generated or manual captions
-  const track =
-    captions.find((t: { languageCode: string }) => t.languageCode === 'en') ||
-    captions.find((t: { languageCode: string }) => t.languageCode.startsWith('en')) ||
-    captions[0];
-
-  const captionUrl = track.baseUrl;
-  if (!captionUrl) {
-    throw new Error('No caption URL found.');
-  }
-
-  // Step 2: Fetch the captions XML
-  const captionRes = await fetch(captionUrl);
-  if (!captionRes.ok) {
-    throw new Error(`Failed to fetch captions (${captionRes.status})`);
-  }
-
-  const captionXml = await captionRes.text();
-
-  // Step 3: Parse XML to extract text
-  const textSegments = captionXml.match(/<text[^>]*>[^<]*<\/text>/g) || [];
-  const transcriptText = textSegments
-    .map((seg: string) => {
-      const textMatch = seg.match(/<text[^>]*>([^<]*)<\/text>/);
-      return textMatch
-        ? textMatch[1]
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/\n/g, ' ')
-            .trim()
-        : '';
-    })
-    .filter(Boolean)
-    .join(' ');
-
-  if (!transcriptText) {
-    throw new Error('Could not extract text from captions.');
-  }
-
-  return transcriptText;
-}
+const SUPADATA_API_KEY = process.env.SUPADATA_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
@@ -86,18 +11,51 @@ export async function POST(request: NextRequest) {
     }
 
     const ytRegex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]+)/;
-    const match = url.match(ytRegex);
-    if (!match) {
+    if (!ytRegex.test(url)) {
       return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 });
     }
 
-    const videoId = match[1];
-    const transcript = await fetchYoutubeTranscript(videoId);
+    if (!SUPADATA_API_KEY) {
+      return NextResponse.json(
+        { error: 'YouTube import is not configured. Please use the Paste Transcript tab instead.' },
+        { status: 501 }
+      );
+    }
 
-    return NextResponse.json({ transcript });
+    const apiUrl = `https://api.supadata.ai/v1/youtube/transcript?url=${encodeURIComponent(url)}&text=true`;
+    const res = await fetch(apiUrl, {
+      headers: { 'x-api-key': SUPADATA_API_KEY },
+    });
+
+    const raw = await res.text();
+    if (!res.ok) {
+      console.error('Supadata error:', res.status, raw);
+      return NextResponse.json(
+        { error: `Could not fetch captions (${res.status}). The video may not have subtitles. Try the Paste Transcript tab.` },
+        { status: 400 }
+      );
+    }
+
+    const data = JSON.parse(raw);
+    // With text=true, content is a string; otherwise it's an array of segments
+    const transcript: string =
+      typeof data.content === 'string'
+        ? data.content
+        : Array.isArray(data.content)
+          ? data.content.map((s: { text: string }) => s.text).join(' ')
+          : '';
+
+    if (!transcript.trim()) {
+      return NextResponse.json(
+        { error: 'This video has no captions available. Try the Paste Transcript tab.' },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({ transcript: transcript.trim() });
   } catch (error: unknown) {
-    console.error('YouTube transcript error:', error);
+    console.error('YouTube route error:', error);
     const message = error instanceof Error ? error.message : 'Failed to fetch transcript';
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
