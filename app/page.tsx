@@ -40,8 +40,10 @@ export default function Home() {
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [pasteTranscript, setPasteTranscript] = useState('');
   const [youtubeUrl, setYoutubeUrl] = useState('');
-  const [uploadTab, setUploadTab] = useState<'file' | 'youtube'>('file');
+  const [youtubeLoading, setYoutubeLoading] = useState(false);
+  const [uploadTab, setUploadTab] = useState<'file' | 'youtube' | 'paste'>('file');
 
   // Quiz state
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
@@ -50,6 +52,8 @@ export default function Home() {
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizFinished, setQuizFinished] = useState(false);
+  const [quizLang, setQuizLang] = useState('');
+  const [quizPickingLang, setQuizPickingLang] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -83,26 +87,33 @@ export default function Home() {
     }
   };
 
+  // --- PASTE TRANSCRIPT ---
+  const handlePasteSubmit = () => {
+    if (!pasteTranscript.trim()) return;
+    setTranscript(pasteTranscript.trim());
+    setScreen('chat');
+  };
+
   // --- YOUTUBE URL ---
   const handleYoutubeSubmit = async () => {
-    if (!youtubeUrl.trim()) return;
-    setTranscribing(true);
+    if (!youtubeUrl.trim() || youtubeLoading) return;
+    setYoutubeLoading(true);
 
     try {
       const res = await fetch('/api/youtube', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: youtubeUrl }),
+        body: JSON.stringify({ url: youtubeUrl.trim() }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setTranscript(data.transcript);
       setScreen('chat');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'YouTube transcription failed';
+      const msg = err instanceof Error ? err.message : 'Failed to fetch YouTube transcript';
       alert('Error: ' + msg);
     } finally {
-      setTranscribing(false);
+      setYoutubeLoading(false);
     }
   };
 
@@ -219,13 +230,14 @@ export default function Home() {
       const res = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: transcript, sourceLang: 'en-IN', targetLang }),
+        body: JSON.stringify({ text: transcript, sourceLang: 'auto', targetLang }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setTranslatedTranscript(data.translated);
-    } catch {
-      setTranslatedTranscript('Translation failed.');
+    } catch (err) {
+      console.error('Transcript translation error:', err);
+      setTranslatedTranscript('Translation failed. The transcript may be too long or the language pair may not be supported.');
     }
   };
 
@@ -254,7 +266,10 @@ export default function Home() {
   };
 
   // --- QUIZ ---
-  const handleGenerateQuiz = async () => {
+  const handleGenerateQuiz = async (language?: string) => {
+    const lang = language || quizLang || 'en-IN';
+    setQuizLang(lang);
+    setQuizPickingLang(false);
     setQuizLoading(true);
     setShowQuiz(true);
     setQuizFinished(false);
@@ -265,7 +280,7 @@ export default function Home() {
       const res = await fetch('/api/quiz', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript }),
+        body: JSON.stringify({ transcript, language: lang }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -312,7 +327,7 @@ export default function Home() {
               <span className="gradient-text">Any language. Any doubt.</span>
             </h1>
             <p className="text-lg text-[var(--text-secondary)] max-w-2xl mx-auto mb-8">
-              Upload a lecture or paste a YouTube link. Ask questions in Hindi, Tamil, Telugu, or any Indian language. VidyaBot answers in your language — by text and voice.
+              Upload a lecture or paste a transcript. Ask questions in Hindi, Tamil, Telugu, or any Indian language. VidyaBot answers in your language — by text and voice.
             </p>
             <button className="btn-primary text-lg px-8 py-4" onClick={() => setScreen('upload')}>
               Start Learning
@@ -322,7 +337,7 @@ export default function Home() {
           {/* How it works */}
           <div className="grid md:grid-cols-3 gap-6 mb-20">
             {[
-              { icon: '1', title: 'Upload or paste', desc: 'Drop an audio/video file or paste a YouTube URL. We transcribe it using Sarvam AI.' },
+              { icon: '1', title: 'Upload or paste', desc: 'Drop an audio/video file or paste a transcript directly. We handle the rest using Sarvam AI.' },
               { icon: '2', title: 'Ask in any language', desc: 'Type or speak your question in Hindi, Tamil, English — any language you think in.' },
               { icon: '3', title: 'Get answers + quiz', desc: 'VidyaBot answers from the lecture in your language, with voice. Then test yourself with a quiz.' },
             ].map((step) => (
@@ -350,7 +365,7 @@ export default function Home() {
                 I thought — what if there was a bot that could take any lecture, let you ask doubts in your own language, and explain things back to you in Hindi, Tamil, Telugu, whatever you speak? Not a translation tool. A tutor. One that listens to you, understands the lecture, and bridges the gap.
               </p>
               <p>
-                That is VidyaBot. It uses Sarvam AI for speech and translation across Indian languages, and Claude as the brain that actually understands the content and teaches it back to you. Voice in, voice out. Your language. Your pace.
+                That is VidyaBot. It uses Indian language AI for speech and translation, and an LLM as the brain that actually understands the content and teaches it back to you. Voice in, voice out. Your language. Your pace.
               </p>
               <p className="text-[var(--purple-300)] font-medium">
                 Because learning should not have a language barrier.
@@ -358,10 +373,30 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Features */}
+          <div className="mb-20">
+            <h2 className="text-2xl font-bold mb-8 text-center gradient-text">Features</h2>
+            <div className="grid md:grid-cols-2 gap-4">
+              {[
+                { title: 'Multilingual Q&A', desc: 'Ask in Hindi, Tamil, Telugu, Bengali, Kannada, Malayalam, Gujarati, Marathi, Punjabi, Odia, or English. Answers come back in your language.' },
+                { title: 'Voice In, Voice Out', desc: 'Speak your question using the mic. Get a spoken answer back — no typing needed.' },
+                { title: 'Auto Language Detection', desc: 'No need to select a language. VidyaBot detects what you are speaking or typing and responds accordingly.' },
+                { title: 'Quiz Yourself', desc: 'Auto-generated multiple-choice questions from the lecture to test your understanding.' },
+                { title: 'Transcript Viewer', desc: 'View the full lecture transcript alongside the chat. Translate it to any supported language.' },
+                { title: 'Per-Answer Translation', desc: 'Translate any individual answer to another language with one click.' },
+              ].map((f) => (
+                <div key={f.title} className="glass p-5 glass-hover">
+                  <h3 className="text-sm font-semibold mb-1 text-[var(--purple-300)]">{f.title}</h3>
+                  <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Tech */}
           <div className="text-center mb-12">
             <p className="text-sm text-[var(--text-secondary)]">
-              Built with Sarvam AI (Saaras STT, Bulbul TTS, Mayura Translation) + Claude Sonnet + Next.js
+              Built with Indian language AI (STT, TTS, Translation) + LLM + Next.js
             </p>
           </div>
         </div>
@@ -408,6 +443,16 @@ export default function Home() {
             >
               YouTube URL
             </button>
+            <button
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                uploadTab === 'paste'
+                  ? 'bg-gradient-to-r from-purple-600 to-purple-700 text-white'
+                  : 'text-[var(--text-secondary)] hover:text-white'
+              }`}
+              onClick={() => setUploadTab('paste')}
+            >
+              Paste Transcript
+            </button>
           </div>
 
           {uploadTab === 'file' ? (
@@ -443,32 +488,51 @@ export default function Home() {
                 disabled={transcribing}
               />
             </div>
-          ) : (
+          ) : uploadTab === 'youtube' ? (
             <div className="space-y-4">
               <input
                 type="text"
                 className="input-dark"
-                placeholder="Paste a YouTube URL here..."
+                placeholder="https://www.youtube.com/watch?v=..."
                 value={youtubeUrl}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
-                disabled={transcribing}
-                onKeyDown={(e) => e.key === 'Enter' && handleYoutubeSubmit()}
+                disabled={youtubeLoading}
               />
               <button
                 className="btn-primary w-full"
                 onClick={handleYoutubeSubmit}
-                disabled={transcribing || !youtubeUrl.trim()}
+                disabled={!youtubeUrl.trim() || youtubeLoading}
               >
-                {transcribing ? (
+                {youtubeLoading ? (
                   <span className="flex items-center justify-center gap-2">
-                    <span className="spinner"></span> Downloading & transcribing...
+                    <span className="spinner" style={{ width: 16, height: 16 }}></span>
+                    Fetching captions...
                   </span>
                 ) : (
-                  'Transcribe Video'
+                  'Fetch Transcript'
                 )}
               </button>
               <p className="text-xs text-[var(--text-secondary)]">
-                Note: YouTube download requires yt-dlp on the server. If unavailable, download the audio and upload it above.
+                Pulls the video&apos;s captions directly — works with any video that has subtitles enabled.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <textarea
+                className="input-dark min-h-[200px] resize-y"
+                placeholder="Paste your lecture transcript here..."
+                value={pasteTranscript}
+                onChange={(e) => setPasteTranscript(e.target.value)}
+              />
+              <button
+                className="btn-primary w-full"
+                onClick={handlePasteSubmit}
+                disabled={!pasteTranscript.trim()}
+              >
+                Start Learning
+              </button>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Tip: On YouTube, click the three dots (...) below a video, then &quot;Show transcript&quot; to copy it.
               </p>
             </div>
           )}
@@ -478,6 +542,36 @@ export default function Home() {
   }
 
   // --- QUIZ MODAL ---
+  // --- QUIZ LANGUAGE PICKER ---
+  const QuizLangPicker = () => {
+    if (!quizPickingLang) return null;
+    return (
+      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+        <div className="glass p-6 md:p-8 max-w-sm w-full">
+          <h2 className="text-xl font-bold gradient-text mb-2">Quiz Language</h2>
+          <p className="text-sm text-[var(--text-secondary)] mb-5">What language should the quiz be in?</p>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            {LANGUAGES.map((l) => (
+              <button
+                key={l.code}
+                className="quiz-option text-sm"
+                onClick={() => handleGenerateQuiz(l.code)}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="text-xs text-[var(--text-secondary)] hover:text-white w-full text-center mt-2"
+            onClick={() => setQuizPickingLang(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const QuizModal = () => {
     if (!showQuiz) return null;
     const q = quizQuestions[quizIndex];
@@ -513,7 +607,7 @@ export default function Home() {
                 <button className="btn-secondary" onClick={() => setShowQuiz(false)}>
                   Back to Chat
                 </button>
-                <button className="btn-primary" onClick={handleGenerateQuiz}>
+                <button className="btn-primary" onClick={() => { setShowQuiz(false); setQuizPickingLang(true); }}>
                   New Quiz
                 </button>
               </div>
@@ -576,6 +670,7 @@ export default function Home() {
   // --- CHAT SCREEN ---
   return (
     <div className="min-h-screen flex flex-col">
+      <QuizLangPicker />
       <QuizModal />
 
       {/* Header */}
@@ -602,7 +697,7 @@ export default function Home() {
           <button className="btn-secondary text-xs py-1 px-3" onClick={() => setShowTranscript(!showTranscript)}>
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
-          <button className="btn-secondary text-xs py-1 px-3" onClick={handleGenerateQuiz}>
+          <button className="btn-secondary text-xs py-1 px-3" onClick={() => setQuizPickingLang(true)}>
             Quiz Me
           </button>
         </div>
