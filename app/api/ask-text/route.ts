@@ -1,32 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { askTutor, textToSpeech } from '@/lib/sarvam'
+import { NextRequest, NextResponse } from 'next/server';
+import { askTutor, textToSpeech } from '@/lib/sarvam';
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    const { question, transcript, chatHistory } = await req.json()
+    const { question, transcript, chatHistory } = await request.json();
 
-    if (!question || !transcript) {
-      return NextResponse.json({ error: 'Missing question or transcript' }, { status: 400 })
-    }
+    const { answer, detectedLang } = await askTutor(question, transcript, chatHistory || []);
 
-    // Ask the tutor (auto-detects language from question)
-    const { answer, detectedLang } = await askTutor(question, transcript, chatHistory || [])
-
-    // Generate TTS in the detected language
-    let audioBase64 = ''
+    // Generate TTS
+    let audioBase64 = null;
     try {
-      audioBase64 = await textToSpeech(answer, detectedLang)
+      const audioBuffer = await textToSpeech(answer, detectedLang);
+      if (audioBuffer) {
+        const bytes = new Uint8Array(audioBuffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        audioBase64 = btoa(binary);
+      }
     } catch (e) {
-      console.error('TTS error (non-fatal):', e)
+      console.error('TTS error (non-fatal):', e);
     }
 
-    return NextResponse.json({
-      answer,
-      audioBase64,
-      detectedLang,
-    })
-  } catch (err: any) {
-    console.error('Ask-text error:', err)
-    return NextResponse.json({ error: err.message || 'Failed to process question' }, { status: 500 })
+    return NextResponse.json({ answer, detectedLang, audio: audioBase64 });
+  } catch (error: unknown) {
+    console.error('Ask error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to get answer';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

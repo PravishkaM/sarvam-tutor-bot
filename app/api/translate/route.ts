@@ -1,18 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { translateText } from '@/lib/sarvam'
+import { NextRequest, NextResponse } from 'next/server';
+import { translateText } from '@/lib/sarvam';
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    const { text, sourceLang, targetLang } = await req.json()
+    const { text, sourceLang, targetLang } = await request.json();
 
-    if (!text || !targetLang) {
-      return NextResponse.json({ error: 'Missing text or targetLang' }, { status: 400 })
-    }
-
-    const translated = await translateText(text, sourceLang || 'auto', targetLang)
-    return NextResponse.json({ translated })
-  } catch (err: any) {
-    console.error('Translate error:', err)
-    return NextResponse.json({ error: err.message || 'Translation failed' }, { status: 500 })
+    const translated = await translateText(text, sourceLang, targetLang);
+    return NextResponse.json({ translated });
+  } catch (error: unknown) {
+    console.error('Translation error:', error);
+    const message = error instanceof Error ? error.message : 'Translation failed';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
